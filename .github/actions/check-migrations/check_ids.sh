@@ -35,9 +35,14 @@ if ! git cat-file -e "${BASE_REF}^{commit}" 2>/dev/null; then
 fi
 
 ids() {
+  # `git grep` exits 1 when it matches nothing, and `grep` does the same.
+  # Under `set -e -o pipefail` that would abort the script on a legitimately
+  # empty result (a ref with no migrations yet), so swallow it: an empty id
+  # set is a valid answer, not an error.
   git grep -hoE "^revision(: str)? *= *['\"][^'\"]+" "$1" -- "$VDIR" 2>/dev/null \
     | grep -oE "[^'\"]+$" \
-    | sort -u
+    | sort -u \
+    || true
 }
 
 vanished="$(comm -23 <(ids "$BASE_REF") <(ids HEAD))"

@@ -38,6 +38,18 @@ usage() {
 
 BRANCH="scenario/${SCENARIO}"
 
+# Refuse to run with uncommitted work in the tree. This script commits the
+# breakage it creates, and an earlier version used `git add -A` — which
+# silently swept unrelated in-progress edits onto a scenario branch and off
+# main. Bailing out here is the fix; the commit below is also now scoped to
+# the versions directory only.
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  echo "error: working tree is not clean — commit or stash first." >&2
+  echo >&2
+  git status --short >&2
+  exit 1
+fi
+
 # Always build the scenario from a clean main.
 git checkout -q main
 git branch -D "$BRANCH" 2>/dev/null || true
@@ -126,7 +138,9 @@ case "$SCENARIO" in
     ;;
 esac
 
-git add -A
+# Scoped to the versions directory rather than `git add -A`, so this can
+# never pick up anything the scenario didn't create.
+git add -A -- "$VDIR"
 git commit -qm "$MSG"
 
 echo

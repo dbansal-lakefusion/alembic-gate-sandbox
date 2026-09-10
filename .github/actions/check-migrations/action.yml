@@ -18,13 +18,35 @@ inputs:
       diff against and relies on Check C instead.
     required: false
     default: ""
+  alembic-version:
+    description: >
+      Alembic version to install. Pin this to the version the services
+      actually run: a gate that disagrees with production about what counts
+      as a head is the one thing it must never do.
+    required: false
+    default: "1.13.2"
+  python-version:
+    description: Python version to run the checks on.
+    required: false
+    default: "3.11"
 
 runs:
   using: "composite"
   steps:
+    # The action installs its own dependency rather than trusting the
+    # caller to have done it. A GitHub-hosted runner has python3 but no
+    # alembic, so without this every call fails with ModuleNotFoundError.
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Alembic
+      shell: bash
+      run: python -m pip install --quiet "alembic==${{ inputs.alembic-version }}"
+
     - name: Check A — exactly one head
       shell: bash
-      run: python3 "${{ github.action_path }}/check_heads.py" "${{ inputs.alembic-ini }}"
+      run: python "${{ github.action_path }}/check_heads.py" "${{ inputs.alembic-ini }}"
 
     - name: Check B — no revision id deleted or renamed
       if: inputs.base-ref != ''
