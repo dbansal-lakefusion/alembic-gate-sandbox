@@ -1,0 +1,5 @@
+# Pinned to match lakefusion-universe, so the sandbox and the real repo
+# agree on graph semantics. A gate that disagrees with production about
+# what counts as a head is the one thing it must never do.
+alembic==1.13.2
+SQLAlchemy==2.0.34

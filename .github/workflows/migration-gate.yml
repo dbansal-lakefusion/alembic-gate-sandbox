@@ -1,0 +1,83 @@
+name: Migration Gate
+
+# Gates 1 and 2 from the design doc, in one file with three triggers:
+#
+#   pull_request  -> Gate 1. Make this a REQUIRED status check in branch
+#                    protection and it greys out the merge button. The
+#                    workflow file alone blocks nothing.
+#   merge_group   -> Gate 1, inside a merge queue. Without this trigger a
+#                    queue has no check to run and merges unverified.
+#   push          -> Gate 2. Blocks nothing (the commit already exists) but
+#                    reports within seconds that Gate 1 was bypassed.
+#
+# Deliberately NO `paths:` filter. The check is cheap, and merge_group does
+# not reliably support path filters — a path-filtered required check can
+# simply never report, which leaves a PR unmergeable forever.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check-migrations:
+    # This name is what you add to branch protection as the required check.
+    # Renaming it silently un-requires it — the branch just stops being
+    # protected and the PR page looks entirely normal.
+    name: check-migrations
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because Check B compares revision ids against a base
+      # ref. A shallow clone cannot reach it, and the check would skip with
+      # a warning rather than fail — silently useless.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Check B needs something to compare against, and what's available
+      # differs per trigger. Resolving it here keeps the composite action
+      # context-agnostic.
+      - name: Resolve base ref
+        id: base
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request)
+              ref="${{ github.event.pull_request.base.sha }}"
+              ;;
+            merge_group)
+              ref="${{ github.event.merge_group.base_sha }}"
+              ;;
+            push)
+              # All-zeros on a branch's first push — check_ids.sh treats
+              # that as "nothing to compare", not a failure.
+              ref="${{ github.event.before }}"
+              ;;
+            *)
+              ref=""
+              ;;
+          esac
+          echo "Base ref for Check B: ${ref:-(none)}"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/check-migrations
+        with:
+          alembic-ini: alembic.ini
+          versions-dir: alembic/versions
+          base-ref: ${{ steps.base.outputs.ref }}
+
+      # Gate 2 only: a bypass has already landed on main, so shout about it.
+      # In the real repo this is where the existing slackapi/slack-github-action
+      # step goes, reusing secrets.SLACK_WEBHOOK_URL. Kept as an echo here so
+      # the sandbox needs no secrets.
+      - name: Alert on a post-merge failure
+        if: failure() && github.event_name == 'push'
+        run: |
+          echo "::error::a broken migration graph reached ${{ github.ref_name }}"
+          echo "This is where the Slack notification fires in the real repo."

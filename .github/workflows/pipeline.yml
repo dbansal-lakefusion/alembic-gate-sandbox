@@ -1,0 +1,164 @@
+name: Build & Deploy (cascade demo)
+
+# Gate 3 from the design doc: proves that ONE `needs:` line blocks an entire
+# pipeline. The job graph here mirrors the real ci_all_service.yml — the
+# same shape, scaled from 13 build jobs down to 2:
+#
+#   guard-migrations          <- the only job added
+#        |
+#   detect-changes            <- needs: [guard-migrations]  (the only edit)
+#        |
+#   build-service-a, build-service-b
+#        |
+#   update-manifests          <- keeps the real workflow's if: condition
+#        |
+#   report-status             <- keeps the real workflow's reporting logic
+#
+# The real workflow's update-manifests already requires
+# `needs.detect-changes.result == 'success'`, so failing the guard skips it
+# with no edit. That is the whole trick.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # THE ONLY NEW JOB. Everything downstream is skipped when this fails.
+  # ---------------------------------------------------------------------
+  guard-migrations:
+    name: guard-migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve base ref
+        id: base
+        run: echo "ref=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/check-migrations
+        with:
+          alembic-ini: alembic.ini
+          versions-dir: alembic/versions
+          base-ref: ${{ steps.base.outputs.ref }}
+
+  # ---------------------------------------------------------------------
+  # Everything below is the EXISTING pipeline shape. Only the `needs:` on
+  # detect-changes is new.
+  # ---------------------------------------------------------------------
+  detect-changes:
+    needs: [guard-migrations]
+    runs-on: ubuntu-latest
+    outputs:
+      service-a: ${{ steps.filter.outputs.service-a }}
+      service-b: ${{ steps.filter.outputs.service-b }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect which services changed
+        id: filter
+        run: |
+          # Stands in for dorny/paths-filter. Always true here so the
+          # downstream jobs actually run in the happy path.
+          echo "service-a=true" >> "$GITHUB_OUTPUT"
+          echo "service-b=true" >> "$GITHUB_OUTPUT"
+          echo "detect-changes ran — so the guard passed"
+
+  build-service-a:
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.service-a == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "building service-a (stands in for a Docker build + push)"
+
+  build-service-b:
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.service-b == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "building service-b (stands in for a Docker build + push)"
+
+  update-manifests:
+    needs: [detect-changes, build-service-a, build-service-b]
+    # Copied from the real ci_all_service.yml. Note it already demands
+    # detect-changes success — which is why a guard failure skips this whole
+    # job without touching this condition.
+    if: |
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      !contains(needs.*.result, 'cancelled') &&
+      (needs.build-service-a.result == 'success' ||
+       needs.build-service-b.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update service-a manifest
+        if: needs.build-service-a.result == 'success'
+        run: echo "writing service-a image tag to the manifest repo"
+      - name: Update service-b manifest
+        if: needs.build-service-b.result == 'success'
+        run: echo "writing service-b image tag to the manifest repo"
+      - name: Loud marker
+        run: echo "::warning::DEPLOYED — if you see this after a guard failure, the cascade is broken"
+
+  report-status:
+    needs: [guard-migrations, detect-changes, build-service-a, build-service-b, update-manifests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # Faithful copy of the real check-build-status logic, bug included, so
+      # you can see it misreport. It only trips on 'failure' — a skipped job
+      # leaves the flag false.
+      - name: Report (existing logic — reproduces the bug)
+        run: |
+          BUILD_FAILED=false
+          STATUS=""
+          for entry in \
+            "service-a:${{ needs.build-service-a.result }}" \
+            "service-b:${{ needs.build-service-b.result }}"
+          do
+            svc="${entry%%:*}"; res="${entry##*:}"
+            if [[ "$res" == "failure" ]]; then
+              STATUS="${STATUS}FAILED ${svc}"$'\n'; BUILD_FAILED=true
+            elif [[ "$res" == "success" ]]; then
+              STATUS="${STATUS}ok ${svc}"$'\n'
+            elif [[ "$res" == "skipped" ]]; then
+              STATUS="${STATUS}skipped ${svc}"$'\n'
+            fi
+          done
+          echo "--- what Slack would say TODAY ---"
+          printf '%s' "$STATUS"
+          if [[ "$BUILD_FAILED" == true ]]; then
+            echo "RESULT: build failed"
+          else
+            echo "RESULT: no failures  <-- WRONG when the guard blocked everything"
+          fi
+
+      # The fix: teach the reporter about the guard. Add guard-migrations to
+      # this job's needs (already done above) and check it explicitly.
+      - name: Report (fixed logic)
+        run: |
+          echo "--- what Slack should say ---"
+          if [[ "${{ needs.guard-migrations.result }}" != "success" ]]; then
+            echo "RESULT: BLOCKED — migration check failed (guard-migrations=${{ needs.guard-migrations.result }})"
+            echo "Nothing was built and nothing was deployed."
+            exit 0
+          fi
+          if [[ "${{ needs.build-service-a.result }}" == "failure" || \
+                "${{ needs.build-service-b.result }}" == "failure" ]]; then
+            echo "RESULT: build failed"
+          else
+            echo "RESULT: all good"
+          fi
+
+      - name: Show the whole job graph outcome
+        run: |
+          echo "guard-migrations : ${{ needs.guard-migrations.result }}"
+          echo "detect-changes   : ${{ needs.detect-changes.result }}"
+          echo "build-service-a  : ${{ needs.build-service-a.result }}"
+          echo "build-service-b  : ${{ needs.build-service-b.result }}"
+          echo "update-manifests : ${{ needs.update-manifests.result }}"
