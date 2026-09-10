@@ -1,0 +1,35 @@
+name: "Check migrations"
+description: >
+  Fails if the Alembic migration graph has more than one head (Check A),
+  or if any previously-present revision id has vanished (Check B).
+  Reads files only — needs no database and no secrets.
+
+inputs:
+  alembic-ini:
+    description: Path to alembic.ini, relative to the repo root.
+    required: true
+  versions-dir:
+    description: Path to the versions/ directory, relative to the repo root.
+    required: true
+  base-ref:
+    description: >
+      Git ref to compare against for Check B (deleted/renamed revision
+      ids). Leave empty to skip Check B — e.g. gate 5 has no Git history to
+      diff against and relies on Check C instead.
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check A — exactly one head
+      shell: bash
+      run: python3 "${{ github.action_path }}/check_heads.py" "${{ inputs.alembic-ini }}"
+
+    - name: Check B — no revision id deleted or renamed
+      if: inputs.base-ref != ''
+      shell: bash
+      run: |
+        bash "${{ github.action_path }}/check_ids.sh" \
+          "${{ inputs.versions-dir }}" \
+          "${{ inputs.base-ref }}"
