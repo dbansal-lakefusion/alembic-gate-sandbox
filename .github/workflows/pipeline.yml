@@ -20,7 +20,13 @@ name: Build & Deploy (cascade demo)
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # Scenario branches run the cascade too, so the guard can be seen
+      # blocking a whole pipeline WITHOUT force-pushing breakage onto a
+      # protected default branch. Protection would reject that push anyway
+      # once "do not allow bypassing" is enabled.
+      - "scenario/**"
   workflow_dispatch:
 
 permissions:

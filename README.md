@@ -80,26 +80,46 @@ Local tests prove the *logic*. They cannot prove the *gating* — a merge
 button greying out, a merge queue re-testing PR-against-PR, an admin
 bypassing a required check. Those are GitHub features and need a real repo.
 
-See the numbered steps in the accompanying design doc, or in short:
+Branch protection is only enforced on public repos, or private ones under a
+paid plan. On a free account, make the repo public — there is nothing
+sensitive here.
 
-1. Push this repo to a private GitHub repo.
-2. Let the workflows run once on `main` so the check registers.
-3. Add `check-migrations` as a required status check on `main`.
-4. Push a `two-heads` PR and confirm the merge button is disabled.
-5. Push a `healthy` PR and confirm it merges.
-6. Push to `main` directly and watch Gate 2 report the bypass.
+1. Push to GitHub and let both workflows run once on `main`. A status check
+   only becomes selectable in branch protection after it has reported once.
+2. Add a branch protection rule for `main`. Watch the counter under the
+   pattern field: it must read **"applies to 1 branch"** before you save. A
+   rule matching zero branches saves happily and protects nothing.
+3. Require `check-migrations`, plus *require a pull request*, *require
+   branches to be up to date*, and *do not allow bypassing*.
+4. Open a `two-heads` PR — the merge button should be disabled.
+5. Open a `healthy` PR — it should merge.
+6. Push a scenario branch and watch `pipeline.yml` cascade: the guard fails
+   and every build job plus `update-manifests` shows as skipped.
 7. Optionally enable a merge queue and test the two-PR race.
+
+Note on Gate 2 (the post-merge detector): once Gate 1 is required and
+bypassing is disallowed, Gate 2 can no longer be made to fire here, because
+nothing broken can reach `main` any more. That is the correct outcome, not a
+gap — Gate 2 exists for organisations where admins *can* bypass, and it stays
+silent when they cannot.
 
 ## Reproducing a single scenario
 
 ```bash
-bash scripts/make_scenario.sh two-heads     # creates branch scenario/two-heads
-git push -u origin scenario/two-heads       # then open a PR
-git checkout main                           # back to a clean tree
+bash scripts/make_scenario.sh two-heads
+git push -u origin scenario/two-heads
+git checkout main
 ```
 
-Available: `healthy`, `two-heads`, `delete-head`, `delete-middle`,
-`rename-id`, `rename-cosmetic`.
+Then open a PR against `main`. Available scenarios: `healthy`, `two-heads`,
+`delete-head`, `delete-middle`, `rename-id`, `rename-cosmetic`.
+
+Pushing a `scenario/**` branch also runs `pipeline.yml`, so the same push
+demonstrates both the PR gate and the whole-pipeline cascade.
+
+`make_scenario.sh` refuses to run on a dirty tree, so commit or stash first.
+It also leaves the scenario branch checked out — `git checkout main` when
+you're done.
 
 ## The workflows
 
