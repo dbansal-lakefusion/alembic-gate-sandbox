@@ -112,7 +112,45 @@ git checkout main
 ```
 
 Then open a PR against `main`. Available scenarios: `healthy`, `two-heads`,
-`delete-head`, `delete-middle`, `rename-id`, `rename-cosmetic`.
+`delete-head`, `delete-middle`, `rename-id`, `rename-cosmetic`, `race-a`,
+`race-b`.
+
+## The staleness race — the one a required check cannot catch
+
+`two-heads` forks from the root, so that branch has two heads by itself and
+fails in isolation. The dangerous case is subtler: **two PRs that are each
+individually correct.**
+
+```
+main:    ... -> C
+race-a:  ... -> C -> A      one head. passes.
+race-b:  ... -> C -> B      one head. passes.
+merged:  ... -> C -> A
+                  \-> B     TWO heads. broken.
+```
+
+Neither check was wrong — each tested a base that did not yet contain the
+other. Merging the first does not re-run the second's check, so the second
+merges on a stale pass.
+
+Prove it locally, no GitHub needed:
+
+```bash
+bash scripts/demo_race.sh .venv/bin/python
+```
+
+It builds both branches, shows each passing on its own, then merges both and
+shows the same check now failing.
+
+Closing this is a **branch protection setting, not a workflow change** — the
+gate is already correct, it just needs re-running at the right moment:
+
+- **Require branches to be up to date before merging** — the second PR must
+  absorb the first before its merge button enables; that push re-runs its
+  check, which then fails. Manual, per PR, and tedious on a busy branch.
+- **A merge queue** — tests each PR against the base *plus* everything queued
+  ahead of it, and ejects whichever breaks. Automatic, and scales to any
+  number of concurrent PRs.
 
 Pushing a `scenario/**` branch also runs `pipeline.yml`, so the same push
 demonstrates both the PR gate and the whole-pipeline cascade.
