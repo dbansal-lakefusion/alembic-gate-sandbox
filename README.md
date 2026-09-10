@@ -1,7 +1,8 @@
 # Alembic gate sandbox
 
-A throwaway repo for testing the Alembic migration-safety gates before they
-go anywhere near `lakefusion-universe`.
+A throwaway repo for testing a set of Alembic migration-safety gates end to
+end — the CI checks, the branch protection, and the pipeline cascade — before
+any of it goes near a production monorepo.
 
 It contains a real three-migration Alembic chain, the checks, a composite
 action, two workflows, and a script that reproduces each failure mode on
@@ -109,8 +110,8 @@ filter, deliberately: a path-filtered required check can never report, which
 leaves a PR permanently unmergeable.
 
 **`.github/workflows/pipeline.yml`** — Gate 3, and the point of the whole
-sandbox. It mirrors the real `ci_all_service.yml` job graph, scaled from 13
-build jobs to 2:
+sandbox. It mirrors a typical monorepo build-and-deploy job graph, scaled
+from a dozen-odd build jobs down to 2:
 
 ```
 guard-migrations          <- the only job added
@@ -124,10 +125,10 @@ update-manifests          <- unchanged real condition
 report-status             <- unchanged real reporting logic
 ```
 
-The real `update-manifests` already requires
-`needs.detect-changes.result == 'success'`, so failing the guard skips the
-whole deploy without editing it. **One `needs:` line blocks the entire
-pipeline.**
+The realistic bit is `update-manifests`: pipelines of this shape usually
+already require `needs.detect-changes.result == 'success'`, so failing the
+guard skips the whole deploy without editing that job at all. **One `needs:`
+line blocks the entire pipeline.**
 
 `report-status` runs the existing reporting logic *and* a fixed version side
 by side, so you can see the bug: the current logic only trips on a result of
@@ -137,10 +138,15 @@ checks the guard's result explicitly.
 
 ## What this sandbox does NOT cover
 
-- The Databricks path. The real repo ships the same migrations twice, and the
-  second pipeline needs its own gate before `build_lakefusion_app.sh`.
-- Baselining. The real repo has 11 permanently-deleted revision ids, so a
-  full-history variant of Check B needs a machine-generated allowlist. This
-  sandbox has clean history and needs none.
-- Real database reachability from a runner, which is still an open question
-  for Check C at gate 3.
+- **A second deploy path.** If the same migrations get packaged into more
+  than one deployable artifact, every pipeline that ships them needs its own
+  gate — `needs:` cannot cross workflow files, so there is no single place to
+  put one check that blocks both.
+- **Baselining.** A long-lived repo may already have revision ids that were
+  deleted and never restored, in which case a full-history variant of Check B
+  fails immediately and forever until you give it a machine-generated
+  allowlist of the known-missing ids. This sandbox has clean history and needs
+  none. Note the pull-request form of Check B needs no baseline at all: it
+  only asks whether *this change* removes an id.
+- **Database reachability from a runner**, which is what decides whether
+  Check C can run as a pre-deploy gate rather than only at app startup.

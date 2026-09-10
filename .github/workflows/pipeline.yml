@@ -1,8 +1,8 @@
 name: Build & Deploy (cascade demo)
 
 # Gate 3 from the design doc: proves that ONE `needs:` line blocks an entire
-# pipeline. The job graph here mirrors the real ci_all_service.yml — the
-# same shape, scaled from 13 build jobs down to 2:
+# pipeline. The job graph mirrors a typical monorepo build-and-deploy
+# workflow — the same shape, scaled from a dozen-odd build jobs down to 2:
 #
 #   guard-migrations          <- the only job added
 #        |
@@ -85,9 +85,9 @@ jobs:
 
   update-manifests:
     needs: [detect-changes, build-service-a, build-service-b]
-    # Copied from the real ci_all_service.yml. Note it already demands
-    # detect-changes success — which is why a guard failure skips this whole
-    # job without touching this condition.
+    # This condition is the realistic part: pipelines of this shape usually
+    # already demand detect-changes success, which is why a guard failure
+    # skips this whole job without touching the condition at all.
     if: |
       always() &&
       needs.detect-changes.result == 'success' &&
