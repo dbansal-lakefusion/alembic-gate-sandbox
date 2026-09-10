@@ -30,7 +30,16 @@ CASES=(
 run_one() {
   local name="$1" want_a="$2" want_b="$3"
 
-  bash scripts/make_scenario.sh "$name" >/dev/null 2>&1
+  # If scenario creation fails, ABORT rather than carry on. An earlier
+  # version discarded this exit code, so when make_scenario.sh correctly
+  # refused a dirty tree the harness silently tested main six times over and
+  # reported the results as if the scenarios had been built. A test runner
+  # that cannot tell "not set up" from "passed" is worse than no runner.
+  if ! bash scripts/make_scenario.sh "$name" >/tmp/_mk.txt 2>&1; then
+    echo "  $name: could not create the scenario — aborting"
+    sed 's/^/      /' /tmp/_mk.txt
+    exit 1
+  fi
 
   local got_a got_b
   $PY .github/actions/check-migrations/check_heads.py alembic.ini >/tmp/_a.txt 2>&1
