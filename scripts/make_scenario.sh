@@ -18,6 +18,10 @@
 #                      -> Check B FAIL — changing an id is deleting one
 #   rename-cosmetic  rename a file but keep the revision id inside
 #                      -> everything PASS — proves we don't false-positive
+#   race-a / race-b  two branches, each valid ALONE, that conflict only
+#                    once both are merged
+#                      -> each PASSES on its own; the pair breaks main
+#                      -> see scripts/demo_race.sh
 #
 set -euo pipefail
 
@@ -97,11 +101,35 @@ case "$SCENARIO" in
     ;;
 
   two-heads)
-    # Forked from the ROOT rather than the head: two people branching from
-    # the same commit, exactly as in the doc's Figure 1.
+    # Forked from the ROOT rather than the head, so this branch has two
+    # heads all by itself and fails in isolation. Not the same thing as the
+    # race below.
     new_migration "bbbb11112222" "$ROOT_REV" "add_widgets_colour" \
       'op.add_column("widgets", sa.Column("colour", sa.String(length=20), nullable=True))'
     MSG="feat: add widgets.colour (forked from root -> TWO HEADS)"
+    ;;
+
+  # ---- the staleness race: race-a and race-b -------------------------------
+  # Each of these branches from the CURRENT HEAD, so each has exactly one
+  # head and passes every check on its own. They only conflict once BOTH
+  # are merged, because they then become two children of the same parent.
+  #
+  # This is the case a pull-request check cannot catch by itself: both PRs
+  # are genuinely correct when tested, and merging the first does not
+  # re-run the second's check. Closing it needs either "require branches to
+  # be up to date before merging" or a merge queue.
+  #
+  # Prove it locally with: bash scripts/demo_race.sh
+  race-a)
+    new_migration "race0000aaaa" "$HEAD_REV" "add_orders_placed_at" \
+      'op.add_column("orders", sa.Column("placed_at", sa.DateTime, nullable=True))'
+    MSG="feat: add orders.placed_at (valid alone — half of the race)"
+    ;;
+
+  race-b)
+    new_migration "race0000bbbb" "$HEAD_REV" "add_orders_status" \
+      'op.add_column("orders", sa.Column("status", sa.String(length=20), nullable=True))'
+    MSG="feat: add orders.status (valid alone — other half of the race)"
     ;;
 
   delete-head)
